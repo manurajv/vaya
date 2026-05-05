@@ -30,11 +30,6 @@ service cloud.firestore {
       return isAuth() && uid() == userId;
     }
 
-    function isGroupMember(groupData) {
-      // Use flat memberIds array for O(1) lookup
-      return groupData.memberIds.hasAny([uid()]);
-    }
-
     function isGroupSupplier(groupData) {
       return isAuth() && groupData.supplierId == uid();
     }

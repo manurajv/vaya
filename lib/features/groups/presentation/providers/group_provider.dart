@@ -262,13 +262,16 @@ class GroupService {
     }
   }
 
-  /// Buyer increases their quantity in an active group
+  /// Buyer increases their quantity in an active group.
+  /// The increase is capped so the group total cannot exceed targetQuantity.
   Future<void> updateMemberQuantity({
     required String groupId,
     required String userId,
     required int additionalQuantity,
   }) async {
-    if (additionalQuantity <= 0) throw Exception('Additional quantity must be greater than 0');
+    if (additionalQuantity <= 0) {
+      throw Exception('Additional quantity must be greater than 0');
+    }
 
     final groupRef = _firestore
         .collection(AppConstants.groupsCollection)
@@ -288,25 +291,41 @@ class GroupService {
       }
 
       final member = group.getMember(userId);
-      if (member == null) throw Exception('You are not a member of this group');
+      if (member == null) {
+        throw Exception('You are not a member of this group');
+      }
 
-      // Only allow increase if payment is still pending
+      // Block change after payment
       if (member.paymentStatus != AppConstants.paymentStatusPending) {
         throw Exception('Quantity cannot be changed after payment is made');
       }
 
+      // Cap: don't let the group exceed its target quantity
+      final target = group.targetQuantity;
+      int allowedAdditional = additionalQuantity;
+      if (target != null) {
+        final remainingCapacity = target - group.totalQuantity;
+        if (remainingCapacity <= 0) {
+          throw Exception(
+              'Group has already reached its target quantity of $target units');
+        }
+        if (additionalQuantity > remainingCapacity) {
+          allowedAdditional = remainingCapacity;
+        }
+      }
+
       final updatedMembers = group.members.map((m) {
         if (m.userId == userId) {
-          return m.copyWith(quantity: m.quantity + additionalQuantity);
+          return m.copyWith(quantity: m.quantity + allowedAdditional);
         }
         return m;
       }).toList();
 
-      final newTotal = group.totalQuantity + additionalQuantity;
+      final newTotal = group.totalQuantity + allowedAdditional;
 
-      // Check if group is now complete
+      // Mark complete if target is now met
       String newStatus = group.status;
-      if (group.targetQuantity != null && newTotal >= group.targetQuantity!) {
+      if (target != null && newTotal >= target) {
         newStatus = AppConstants.groupStatusCompleted;
       }
 
@@ -316,6 +335,16 @@ class GroupService {
         'status': newStatus,
         'updatedAt': Timestamp.fromDate(DateTime.now()),
       });
+
+      // Return the actual quantity added (may be less than requested)
+      if (allowedAdditional < additionalQuantity) {
+        throw _PartialUpdateException(
+          added: allowedAdditional,
+          newTotal: newTotal,
+          message:
+              'Only $allowedAdditional units added — group target of $target reached.',
+        );
+      }
     });
   }
 
@@ -352,3 +381,17 @@ class GroupService {
 }
 
 final groupServiceProvider = Provider<GroupService>((ref) => GroupService());
+
+/// Thrown when a quantity increase is partially fulfilled (capped at target)
+class _PartialUpdateException implements Exception {
+  final int added;
+  final int newTotal;
+  final String message;
+  const _PartialUpdateException({
+    required this.added,
+    required this.newTotal,
+    required this.message,
+  });
+  @override
+  String toString() => message;
+}

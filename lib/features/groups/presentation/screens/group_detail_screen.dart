@@ -809,13 +809,23 @@ class _IncreaseQuantitySheetState
   int get _additionalQty =>
       int.tryParse(_additionalQtyCtrl.text.trim()) ?? 0;
 
-  int get _newTotal => widget.currentQuantity + _additionalQty;
+  int get _newMemberTotal => widget.currentQuantity + _additionalQty;
 
   double get _newTotalAmount =>
-      widget.group.currentPricePerUnit * _newTotal;
+      widget.group.currentPricePerUnit * _newMemberTotal;
 
   double get _additionalAmount =>
       widget.group.currentPricePerUnit * _additionalQty;
+
+  /// How many more units can be added before hitting the group target
+  int get _remainingCapacity {
+    final target = widget.group.targetQuantity as int?;
+    if (target == null) return 999999; // No cap for buyer-initiated groups
+    final groupTotal = widget.group.totalQuantity as int;
+    return (target - groupTotal).clamp(0, 999999);
+  }
+
+  bool get _atCapacity => _remainingCapacity == 0;
 
   Future<void> _confirm() async {
     if (!_formKey.currentState!.validate()) return;
@@ -830,18 +840,22 @@ class _IncreaseQuantitySheetState
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(
-                'Quantity updated to $_newTotal units!'),
+            content: Text('Quantity updated to $_newMemberTotal units!'),
             backgroundColor: AppColors.success,
           ),
         );
       }
     } catch (e) {
       if (mounted) {
+        // _PartialUpdateException shows a warning, not an error
+        final isPartial = e.toString().contains('Only');
+        Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-              content: Text(e.toString()),
-              backgroundColor: AppColors.error),
+            content: Text(e.toString()),
+            backgroundColor:
+                isPartial ? AppColors.warning : AppColors.error,
+          ),
         );
       }
     } finally {
@@ -852,7 +866,6 @@ class _IncreaseQuantitySheetState
   @override
   Widget build(BuildContext context) {
     return Padding(
-      // Push sheet above keyboard
       padding: EdgeInsets.only(
         bottom: MediaQuery.of(context).viewInsets.bottom,
       ),
@@ -897,74 +910,129 @@ class _IncreaseQuantitySheetState
                   color: AppColors.textSecondary,
                 ),
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 12),
 
-              // Input
-              TextFormField(
-                controller: _additionalQtyCtrl,
-                keyboardType: TextInputType.number,
-                autofocus: true,
-                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                onChanged: (_) => setState(() {}),
-                validator: (v) => Validators.validateQuantity(v, min: 1),
-                decoration: InputDecoration(
-                  labelText: 'Additional Quantity',
-                  hintText: 'How many more units?',
-                  prefixIcon: const Icon(Icons.add_circle_outline),
-                  suffixText: 'units',
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              // Live preview
-              if (_additionalQty > 0) ...[
+              // Remaining capacity banner
+              if (widget.group.targetQuantity != null) ...[
                 Container(
-                  padding: const EdgeInsets.all(14),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 8),
                   decoration: BoxDecoration(
-                    color: AppColors.surfaceVariant,
-                    borderRadius: BorderRadius.circular(12),
+                    color: _atCapacity
+                        ? AppColors.errorLight
+                        : AppColors.infoLight,
+                    borderRadius: BorderRadius.circular(8),
                   ),
-                  child: Column(
+                  child: Row(
                     children: [
-                      _PreviewRow(
-                        label: 'Current quantity',
-                        value: '${widget.currentQuantity} units',
+                      Icon(
+                        _atCapacity
+                            ? Icons.block_outlined
+                            : Icons.info_outline,
+                        size: 14,
+                        color: _atCapacity
+                            ? AppColors.error
+                            : AppColors.info,
                       ),
-                      _PreviewRow(
-                        label: 'Adding',
-                        value: '+ $_additionalQty units',
-                        valueColor: AppColors.success,
-                      ),
-                      const Divider(height: 14),
-                      _PreviewRow(
-                        label: 'New total',
-                        value: '$_newTotal units',
-                        isBold: true,
-                      ),
-                      _PreviewRow(
-                        label: 'Additional cost',
-                        value: Formatters.formatCurrency(_additionalAmount),
-                        valueColor: AppColors.accent,
-                      ),
-                      _PreviewRow(
-                        label: 'New order total',
-                        value: Formatters.formatCurrency(_newTotalAmount),
-                        isBold: true,
+                      const SizedBox(width: 6),
+                      Text(
+                        _atCapacity
+                            ? 'Group target reached — no more units can be added'
+                            : 'You can add up to $_remainingCapacity more units within this group',
+                        style: TextStyle(
+                          fontFamily: 'Poppins',
+                          fontSize: 12,
+                          color: _atCapacity
+                              ? AppColors.error
+                              : AppColors.info,
+                        ),
                       ),
                     ],
                   ),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 14),
               ],
 
-              AppButton(
-                label: _additionalQty > 0
-                    ? 'Confirm — Add $_additionalQty units'
-                    : 'Enter quantity above',
-                onPressed: _additionalQty > 0 && !_isLoading ? _confirm : null,
-                isLoading: _isLoading,
-                prefixIcon: Icons.check_circle_outline,
-              ),
+              if (!_atCapacity) ...[
+                // Input
+                TextFormField(
+                  controller: _additionalQtyCtrl,
+                  keyboardType: TextInputType.number,
+                  autofocus: true,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  onChanged: (_) => setState(() {}),
+                  validator: (v) {
+                    final err = Validators.validateQuantity(v, min: 1);
+                    if (err != null) return err;
+                    final qty = int.tryParse(v ?? '') ?? 0;
+                    if (widget.group.targetQuantity != null &&
+                        qty > _remainingCapacity) {
+                      return 'Max $_remainingCapacity units available in this group';
+                    }
+                    return null;
+                  },
+                  decoration: InputDecoration(
+                    labelText: 'Additional Quantity',
+                    hintText: widget.group.targetQuantity != null
+                        ? 'Max $_remainingCapacity units'
+                        : 'How many more units?',
+                    prefixIcon: const Icon(Icons.add_circle_outline),
+                    suffixText: 'units',
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                // Live preview
+                if (_additionalQty > 0) ...[
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: AppColors.surfaceVariant,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Column(
+                      children: [
+                        _PreviewRow(
+                          label: 'Current quantity',
+                          value: '${widget.currentQuantity} units',
+                        ),
+                        _PreviewRow(
+                          label: 'Adding',
+                          value: '+ $_additionalQty units',
+                          valueColor: AppColors.success,
+                        ),
+                        const Divider(height: 14),
+                        _PreviewRow(
+                          label: 'Your new total',
+                          value: '$_newMemberTotal units',
+                          isBold: true,
+                        ),
+                        _PreviewRow(
+                          label: 'Additional cost',
+                          value: Formatters.formatCurrency(_additionalAmount),
+                          valueColor: AppColors.accent,
+                        ),
+                        _PreviewRow(
+                          label: 'New order total',
+                          value: Formatters.formatCurrency(_newTotalAmount),
+                          isBold: true,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                ],
+
+                AppButton(
+                  label: _additionalQty > 0
+                      ? 'Confirm — Add $_additionalQty units'
+                      : 'Enter quantity above',
+                  onPressed:
+                      _additionalQty > 0 && !_isLoading ? _confirm : null,
+                  isLoading: _isLoading,
+                  prefixIcon: Icons.check_circle_outline,
+                ),
+              ],
             ],
           ),
         ),
