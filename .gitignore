@@ -1,0 +1,87 @@
+# ── Flutter / Dart ────────────────────────────────────────────────────────────
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+/coverage/
+app.*.symbols
+app.*.map.json
+
+# ── IntelliJ / Android Studio ─────────────────────────────────────────────────
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# ── Android build artifacts ───────────────────────────────────────────────────
+/android/app/debug
+/android/app/profile
+/android/app/release
+android/local.properties
+
+# ── iOS ───────────────────────────────────────────────────────────────────────
+ios/Flutter/Generated.xcconfig
+ios/Flutter/flutter_export_environment.sh
+ios/Flutter/ephemeral/
+
+# ── Firebase secrets (NEVER commit these) ────────────────────────────────────
+# google-services.json contains API keys — keep out of public repos
+# Uncomment the line below if this is a PUBLIC repository:
+# android/app/google-services.json
+# ios/Runner/GoogleService-Info.plist
+# lib/firebase_options.dart
+
+# ── Node / Cloud Functions ────────────────────────────────────────────────────
+functions/node_modules/
+functions/.env
+functions/.env.*
+functions/*.local
+
+# ── Firebase local files ──────────────────────────────────────────────────────
+.firebase/
+firebase-debug.log
+firebase-debug.*.log
+firestore-debug.log
+ui-debug.log
+pubsub-debug.log
+storage-debug.log
+database-debug.log
+.runtimeconfig.json
+
+# ── Environment / secrets ─────────────────────────────────────────────────────
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.jks
+*.keystore
+key.properties
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
