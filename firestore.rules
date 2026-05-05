@@ -27,10 +27,6 @@ service cloud.firestore {
       return isAuth() && callerDoc().userType == 'buyer';
     }
 
-    function isVerifiedSupplier() {
-      return isSupplier() && callerDoc().isVerifiedSupplier == true;
-    }
-
     function isOwner(userId) {
       return isAuth() && uid() == userId;
     }
