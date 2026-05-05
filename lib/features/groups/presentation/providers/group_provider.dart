@@ -29,14 +29,14 @@ final groupsByProductProvider =
           snap.docs.map((doc) => GroupModel.fromFirestore(doc)).toList());
 });
 
-// Current user's groups
+// Current user's groups — uses a flat memberIds array for reliable arrayContains
 final myGroupsProvider = StreamProvider<List<GroupModel>>((ref) {
   final uid = FirebaseAuth.instance.currentUser?.uid;
   if (uid == null) return Stream.value([]);
 
   return FirebaseFirestore.instance
       .collection(AppConstants.groupsCollection)
-      .where('members', arrayContains: {'userId': uid})
+      .where('memberIds', arrayContains: uid)
       .orderBy('createdAt', descending: true)
       .snapshots()
       .map((snap) =>
@@ -161,6 +161,7 @@ class GroupService {
 
       transaction.update(groupRef, {
         'members': updatedMembers.map((m) => m.toMap()).toList(),
+        'memberIds': updatedMembers.map((m) => m.userId).toList(),
         'totalQuantity': newTotal,
         'status': newStatus,
         'updatedAt': Timestamp.fromDate(DateTime.now()),

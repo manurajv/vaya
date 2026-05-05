@@ -41,6 +41,18 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
     final user = ref.read(currentUserProvider);
     if (user == null) return;
 
+    // Suppliers cannot create buyer groups
+    if (user.userType == AppConstants.userTypeSupplier) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+              'Suppliers cannot join buyer groups. Use the Supplier Dashboard to set group targets.'),
+          backgroundColor: AppColors.error,
+        ),
+      );
+      return;
+    }
+
     setState(() => _isLoading = true);
 
     try {
@@ -67,10 +79,12 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Group created successfully!'),
+            content: Text('Group created! You are now a member.'),
             backgroundColor: AppColors.success,
           ),
         );
+        // Replace the create screen with the group detail screen
+        // so back button goes to the previous screen (product/home)
         context.go('/group/$groupId');
       }
     } catch (e) {

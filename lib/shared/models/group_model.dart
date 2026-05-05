@@ -215,6 +215,8 @@ class GroupModel {
       'targetQuantity': targetQuantity,
       'totalQuantity': totalQuantity,
       'members': members.map((m) => m.toMap()).toList(),
+      // Flat list of member UIDs for efficient arrayContains queries
+      'memberIds': members.map((m) => m.userId).toList(),
       'status': status,
       'deadline': Timestamp.fromDate(deadline),
       'createdAt': Timestamp.fromDate(createdAt),

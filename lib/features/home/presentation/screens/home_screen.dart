@@ -706,7 +706,7 @@ class _GroupsTab extends ConsumerWidget {
                         size: 64, color: AppColors.textHint),
                     const SizedBox(height: 16),
                     const Text(
-                      'You haven\'t joined any groups yet.',
+                      "You haven't joined any groups yet.",
                       style: TextStyle(
                         fontFamily: 'Poppins',
                         fontSize: 15,
@@ -723,20 +723,24 @@ class _GroupsTab extends ConsumerWidget {
                       ),
                     ),
                     const SizedBox(height: 24),
-                    ElevatedButton(
-                      onPressed: () {},
-                      child: const Text('Browse Deals'),
+                    ElevatedButton.icon(
+                      // Navigate to home tab (index 0) via the parent HomeScreen
+                      onPressed: () => context.go(AppRoutes.home),
+                      icon: const Icon(Icons.home_outlined, size: 18),
+                      label: const Text('Browse Deals'),
                     ),
                   ],
                 ),
               )
-            : ListView.builder(
-                padding: const EdgeInsets.all(16),
-                itemCount: groups.length,
-                itemBuilder: (ctx, i) => _GroupListCard(group: groups[i]),
+            : RefreshIndicator(
+                onRefresh: () async => ref.invalidate(myGroupsProvider),
+                child: ListView.builder(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: groups.length,
+                  itemBuilder: (ctx, i) => _GroupListCard(group: groups[i]),
+                ),
               ),
-        loading: () =>
-            const Center(child: CircularProgressIndicator()),
+        loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => Center(child: Text(e.toString())),
       ),
     );
@@ -802,7 +806,7 @@ class _GroupListCard extends StatelessWidget {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                   decoration: BoxDecoration(
-                    color: statusColor.withOpacity(0.1),
+                    color: statusColor.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Text(

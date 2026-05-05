@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/constants/app_constants.dart';
 import '../../../../core/utils/formatters.dart';
 import '../../../../core/utils/validators.dart';
 import '../../../../shared/models/pricing_tier_model.dart';
@@ -37,6 +38,17 @@ class _JoinGroupScreenState extends ConsumerState<JoinGroupScreen> {
 
     final user = ref.read(currentUserProvider);
     if (user == null) return;
+
+    // Suppliers cannot join buyer groups
+    if (user.userType == AppConstants.userTypeSupplier) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Suppliers cannot join buyer groups.'),
+          backgroundColor: AppColors.error,
+        ),
+      );
+      return;
+    }
 
     setState(() => _isLoading = true);
 
