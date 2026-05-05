@@ -14,7 +14,6 @@ service cloud.firestore {
       return request.auth.uid;
     }
 
-    // Fetch the caller's user document (cached per request)
     function callerDoc() {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
@@ -31,39 +30,40 @@ service cloud.firestore {
       return isAuth() && uid() == userId;
     }
 
-    // Check if the caller is a member of a group
     function isGroupMember(groupData) {
-      return groupData.members.hasAny([{'userId': uid()}]);
+      // Use flat memberIds array for O(1) lookup
+      return groupData.memberIds.hasAny([uid()]);
     }
 
-    // Check if the caller is the supplier of a group
     function isGroupSupplier(groupData) {
       return isAuth() && groupData.supplierId == uid();
     }
 
-    // Check if the caller is the creator of a group
     function isGroupCreator(groupData) {
       return isAuth() && groupData.creatorId == uid();
+    }
+
+    // Returns true if the update only touches the listed fields
+    function onlyChanging(fields) {
+      return request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(fields);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
     // USERS
     // ─────────────────────────────────────────────────────────────────────────
     match /users/{userId} {
-      // Any authenticated user can read basic profile info
-      // (needed for group member display, supplier name lookup)
       allow read: if isAuth();
 
-      // Only the owner can create or update their own profile
       allow create: if isOwner(userId)
         && request.resource.data.userType in ['buyer', 'supplier']
         && request.resource.data.phoneNumber is string
         && request.resource.data.businessName is string;
 
       allow update: if isOwner(userId)
-        // Prevent userType escalation after creation
+        // Prevent userType escalation
         && request.resource.data.userType == resource.data.userType
-        // Prevent self-verification (isVerifiedSupplier set by admin/functions only)
+        // isVerifiedSupplier can only be set by Cloud Functions / admin
         && request.resource.data.isVerifiedSupplier == resource.data.isVerifiedSupplier;
 
       allow delete: if false;
@@ -73,10 +73,8 @@ service cloud.firestore {
     // PRODUCTS
     // ─────────────────────────────────────────────────────────────────────────
     match /products/{productId} {
-      // All authenticated users can browse products
       allow read: if isAuth();
 
-      // Only the owning supplier can create a product
       allow create: if isSupplier()
         && request.resource.data.supplierId == uid()
         && request.resource.data.name is string
@@ -85,13 +83,10 @@ service cloud.firestore {
         && request.resource.data.minimumOrderQuantity is int
         && request.resource.data.minimumOrderQuantity > 0;
 
-      // Only the owning supplier can update their product
       allow update: if isSupplier()
         && resource.data.supplierId == uid()
-        // Supplier cannot change the supplierId
         && request.resource.data.supplierId == resource.data.supplierId;
 
-      // Soft-delete only (set isActive = false); hard delete not allowed
       allow delete: if false;
     }
 
@@ -99,11 +94,8 @@ service cloud.firestore {
     // GROUPS
     // ─────────────────────────────────────────────────────────────────────────
     match /groups/{groupId} {
-      // Any authenticated user can read groups (needed for browsing deals)
       allow read: if isAuth();
 
-      // Buyers can create buyer-initiated groups
-      // Suppliers can create supplier-target groups for their own products
       allow create: if isAuth()
         && (
           // Buyer creating a buyer-initiated group
@@ -111,7 +103,7 @@ service cloud.firestore {
             && request.resource.data.mode == 'buyer_initiated'
             && request.resource.data.creatorId == uid())
           ||
-          // Supplier creating a target group for their own product
+          // Supplier creating a supplier-target group for their own product
           (isSupplier()
             && request.resource.data.mode == 'supplier_target'
             && request.resource.data.supplierId == uid()
@@ -124,14 +116,16 @@ service cloud.firestore {
         && request.resource.data.pricingTiers.size() > 0;
 
       allow update: if isAuth() && (
-        // Any authenticated user can join (add themselves to members)
-        // or update totalQuantity — validated by Cloud Function / transaction
-        isGroupMember(resource.data)
+        // ① Any authenticated buyer can join (adds themselves to members/memberIds)
+        //   or increase their quantity — both touch members, memberIds, totalQuantity
+        (isBuyer() && onlyChanging([
+          'members', 'memberIds', 'totalQuantity', 'status', 'updatedAt'
+        ]))
         ||
-        // Group creator can update (invite, extend deadline)
+        // ② Group creator can extend deadline, request approval, invite
         isGroupCreator(resource.data)
         ||
-        // Supplier can approve/reject discount and update order status
+        // ③ Supplier can approve/reject discount, update status
         isGroupSupplier(resource.data)
       );
 
@@ -142,19 +136,17 @@ service cloud.firestore {
     // ORDERS
     // ─────────────────────────────────────────────────────────────────────────
     match /orders/{orderId} {
-      // Buyer can read their own orders; supplier can read orders for their products
       allow read: if isAuth() && (
         resource.data.buyerId == uid() ||
         resource.data.supplierId == uid()
       );
 
-      // Orders are created by Cloud Functions (onGroupCompleted trigger)
-      // Allow buyers to create directly as fallback
+      // Orders created by Cloud Functions; allow buyer fallback
       allow create: if isAuth()
         && request.resource.data.buyerId == uid();
 
-      // Buyer can update payment status on their own orders
-      // Supplier can update order status (confirmed/shipped/delivered)
+      // Buyer updates payment status only
+      // Supplier updates order status + tracking only
       allow update: if isAuth() && (
         (resource.data.buyerId == uid()
           && onlyChanging(['paymentStatus', 'updatedAt']))
@@ -172,19 +164,15 @@ service cloud.firestore {
     // PAYMENTS (proof uploads)
     // ─────────────────────────────────────────────────────────────────────────
     match /payments/{paymentId} {
-      // Buyer can read their own payment records
-      // Supplier can read payment records for their groups
       allow read: if isAuth() && (
         resource.data.userId == uid() ||
         resource.data.supplierId == uid()
       );
 
-      // Buyers upload payment proofs
       allow create: if isAuth()
         && request.resource.data.userId == uid()
         && request.resource.data.paymentType in ['token', 'final'];
 
-      // Status updates done by Cloud Functions / admin only
       allow update: if false;
       allow delete: if false;
     }
@@ -193,18 +181,16 @@ service cloud.firestore {
     // CHAT MESSAGES
     // ─────────────────────────────────────────────────────────────────────────
     match /chats/{groupId}/messages/{messageId} {
-      // Only group members and the group's supplier can read/write chat
       allow read: if isAuth() && (
-        isGroupMemberById(groupId) || isGroupSupplierById(groupId)
+        isGroupMemberByIdFlat(groupId) || isGroupSupplierById(groupId)
       );
 
       allow create: if isAuth()
-        && (isGroupMemberById(groupId) || isGroupSupplierById(groupId))
+        && (isGroupMemberByIdFlat(groupId) || isGroupSupplierById(groupId))
         && request.resource.data.senderId == uid()
         && request.resource.data.type in
            ['text', 'image', 'video', 'audio', 'file', 'system'];
 
-      // Messages are immutable once sent
       allow update, delete: if false;
     }
 
@@ -212,15 +198,13 @@ service cloud.firestore {
     // NOTIFICATIONS
     // ─────────────────────────────────────────────────────────────────────────
     match /notifications/{notificationId} {
-      // Users can only read their own notifications
       allow read: if isAuth() && resource.data.userId == uid();
 
-      // Users can mark their own notifications as read
+      // Users can only mark their own notifications as read
       allow update: if isAuth()
         && resource.data.userId == uid()
         && onlyChanging(['isRead']);
 
-      // Created and deleted by Cloud Functions only
       allow create, delete: if false;
     }
 
@@ -232,7 +216,6 @@ service cloud.firestore {
         resource.data.buyerId == uid() ||
         resource.data.supplierId == uid()
       );
-      // Created by Cloud Functions only
       allow write: if false;
     }
 
@@ -240,20 +223,15 @@ service cloud.firestore {
     // HELPER FUNCTIONS (require document lookups)
     // ─────────────────────────────────────────────────────────────────────────
 
-    function isGroupMemberById(groupId) {
+    // Uses flat memberIds array — faster and avoids object comparison issues
+    function isGroupMemberByIdFlat(groupId) {
       let g = get(/databases/$(database)/documents/groups/$(groupId)).data;
-      return g.members.hasAny([{'userId': uid()}]);
+      return g.memberIds.hasAny([uid()]);
     }
 
     function isGroupSupplierById(groupId) {
       let g = get(/databases/$(database)/documents/groups/$(groupId)).data;
       return g.supplierId == uid();
-    }
-
-    // Returns true if the update only touches the listed fields
-    function onlyChanging(fields) {
-      return request.resource.data.diff(resource.data).affectedKeys()
-             .hasOnly(fields);
     }
   }
 }

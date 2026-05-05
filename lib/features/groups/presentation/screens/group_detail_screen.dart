@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_constants.dart';
 import '../../../../core/utils/formatters.dart';
+import '../../../../core/utils/validators.dart';
 import '../../../../shared/widgets/app_button.dart';
 import '../../../../shared/widgets/countdown_timer_widget.dart';
 import '../../../../shared/widgets/group_progress_widget.dart';
@@ -118,17 +120,59 @@ class GroupDetailScreen extends ConsumerWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        'Your Participation',
-                        style: TextStyle(
-                          fontFamily: 'Poppins',
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.primary,
-                        ),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text(
+                            'Your Participation',
+                            style: TextStyle(
+                              fontFamily: 'Poppins',
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.primary,
+                            ),
+                          ),
+                          // Increase quantity button — only for active groups
+                          // before payment is made
+                          if (group.status == AppConstants.groupStatusActive &&
+                              myMembership.paymentStatus ==
+                                  AppConstants.paymentStatusPending)
+                            GestureDetector(
+                              onTap: () => _showIncreaseQuantitySheet(
+                                context,
+                                ref,
+                                group: group,
+                                currentQuantity: myMembership.quantity,
+                                userId: currentUserId!,
+                              ),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 10, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: AppColors.primary,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: const Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.add, color: Colors.white, size: 14),
+                                    SizedBox(width: 4),
+                                    Text(
+                                      'Increase Qty',
+                                      style: TextStyle(
+                                        fontFamily: 'Poppins',
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w600,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                        ],
                       ),
                       const SizedBox(height: 12),
-                      // Use Wrap instead of Row to prevent overflow
                       Wrap(
                         spacing: 16,
                         runSpacing: 8,
@@ -453,6 +497,29 @@ class GroupDetailScreen extends ConsumerWidget {
       ],
     );
   }
+
+  /// Bottom sheet for increasing quantity
+  void _showIncreaseQuantitySheet(
+    BuildContext context,
+    WidgetRef ref, {
+    required group,
+    required int currentQuantity,
+    required String userId,
+  }) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => _IncreaseQuantitySheet(
+        groupId: groupId,
+        group: group,
+        currentQuantity: currentQuantity,
+        userId: userId,
+      ),
+    );
+  }
 }
 
 // ── Widgets ──────────────────────────────────────────────────────────────────
@@ -701,6 +768,243 @@ class _InfoRow extends StatelessWidget {
                     fontWeight: FontWeight.w500,
                     color: AppColors.textPrimary)),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Increase Quantity Bottom Sheet ───────────────────────────────────────────
+
+class _IncreaseQuantitySheet extends ConsumerStatefulWidget {
+  final String groupId;
+  final group;
+  final int currentQuantity;
+  final String userId;
+
+  const _IncreaseQuantitySheet({
+    required this.groupId,
+    required this.group,
+    required this.currentQuantity,
+    required this.userId,
+  });
+
+  @override
+  ConsumerState<_IncreaseQuantitySheet> createState() =>
+      _IncreaseQuantitySheetState();
+}
+
+class _IncreaseQuantitySheetState
+    extends ConsumerState<_IncreaseQuantitySheet> {
+  final _formKey = GlobalKey<FormState>();
+  final _additionalQtyCtrl = TextEditingController();
+  bool _isLoading = false;
+
+  @override
+  void dispose() {
+    _additionalQtyCtrl.dispose();
+    super.dispose();
+  }
+
+  int get _additionalQty =>
+      int.tryParse(_additionalQtyCtrl.text.trim()) ?? 0;
+
+  int get _newTotal => widget.currentQuantity + _additionalQty;
+
+  double get _newTotalAmount =>
+      widget.group.currentPricePerUnit * _newTotal;
+
+  double get _additionalAmount =>
+      widget.group.currentPricePerUnit * _additionalQty;
+
+  Future<void> _confirm() async {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() => _isLoading = true);
+    try {
+      await ref.read(groupServiceProvider).updateMemberQuantity(
+            groupId: widget.groupId,
+            userId: widget.userId,
+            additionalQuantity: _additionalQty,
+          );
+      if (mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+                'Quantity updated to $_newTotal units!'),
+            backgroundColor: AppColors.success,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text(e.toString()),
+              backgroundColor: AppColors.error),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      // Push sheet above keyboard
+      padding: EdgeInsets.only(
+        bottom: MediaQuery.of(context).viewInsets.bottom,
+      ),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Handle bar
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: AppColors.border,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // Title
+              const Text(
+                'Increase Your Quantity',
+                style: TextStyle(
+                  fontFamily: 'Poppins',
+                  fontSize: 17,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Current: ${widget.currentQuantity} units · '
+                '${Formatters.formatCurrency(widget.group.currentPricePerUnit)}/unit',
+                style: const TextStyle(
+                  fontFamily: 'Poppins',
+                  fontSize: 13,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+              const SizedBox(height: 20),
+
+              // Input
+              TextFormField(
+                controller: _additionalQtyCtrl,
+                keyboardType: TextInputType.number,
+                autofocus: true,
+                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                onChanged: (_) => setState(() {}),
+                validator: (v) => Validators.validateQuantity(v, min: 1),
+                decoration: InputDecoration(
+                  labelText: 'Additional Quantity',
+                  hintText: 'How many more units?',
+                  prefixIcon: const Icon(Icons.add_circle_outline),
+                  suffixText: 'units',
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // Live preview
+              if (_additionalQty > 0) ...[
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: AppColors.surfaceVariant,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Column(
+                    children: [
+                      _PreviewRow(
+                        label: 'Current quantity',
+                        value: '${widget.currentQuantity} units',
+                      ),
+                      _PreviewRow(
+                        label: 'Adding',
+                        value: '+ $_additionalQty units',
+                        valueColor: AppColors.success,
+                      ),
+                      const Divider(height: 14),
+                      _PreviewRow(
+                        label: 'New total',
+                        value: '$_newTotal units',
+                        isBold: true,
+                      ),
+                      _PreviewRow(
+                        label: 'Additional cost',
+                        value: Formatters.formatCurrency(_additionalAmount),
+                        valueColor: AppColors.accent,
+                      ),
+                      _PreviewRow(
+                        label: 'New order total',
+                        value: Formatters.formatCurrency(_newTotalAmount),
+                        isBold: true,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ],
+
+              AppButton(
+                label: _additionalQty > 0
+                    ? 'Confirm — Add $_additionalQty units'
+                    : 'Enter quantity above',
+                onPressed: _additionalQty > 0 && !_isLoading ? _confirm : null,
+                isLoading: _isLoading,
+                prefixIcon: Icons.check_circle_outline,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PreviewRow extends StatelessWidget {
+  final String label;
+  final String value;
+  final bool isBold;
+  final Color? valueColor;
+
+  const _PreviewRow({
+    required this.label,
+    required this.value,
+    this.isBold = false,
+    this.valueColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label,
+              style: const TextStyle(
+                  fontFamily: 'Poppins',
+                  fontSize: 13,
+                  color: AppColors.textSecondary)),
+          Text(value,
+              style: TextStyle(
+                  fontFamily: 'Poppins',
+                  fontSize: 13,
+                  fontWeight:
+                      isBold ? FontWeight.w700 : FontWeight.w500,
+                  color: valueColor ?? AppColors.textPrimary)),
         ],
       ),
     );

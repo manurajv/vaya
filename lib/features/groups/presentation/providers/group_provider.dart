@@ -262,6 +262,63 @@ class GroupService {
     }
   }
 
+  /// Buyer increases their quantity in an active group
+  Future<void> updateMemberQuantity({
+    required String groupId,
+    required String userId,
+    required int additionalQuantity,
+  }) async {
+    if (additionalQuantity <= 0) throw Exception('Additional quantity must be greater than 0');
+
+    final groupRef = _firestore
+        .collection(AppConstants.groupsCollection)
+        .doc(groupId);
+
+    await _firestore.runTransaction((transaction) async {
+      final groupDoc = await transaction.get(groupRef);
+      if (!groupDoc.exists) throw Exception('Group not found');
+
+      final group = GroupModel.fromFirestore(groupDoc);
+
+      if (group.status != AppConstants.groupStatusActive) {
+        throw Exception('Quantity can only be changed in an active group');
+      }
+      if (group.isExpired) {
+        throw Exception('This group has expired');
+      }
+
+      final member = group.getMember(userId);
+      if (member == null) throw Exception('You are not a member of this group');
+
+      // Only allow increase if payment is still pending
+      if (member.paymentStatus != AppConstants.paymentStatusPending) {
+        throw Exception('Quantity cannot be changed after payment is made');
+      }
+
+      final updatedMembers = group.members.map((m) {
+        if (m.userId == userId) {
+          return m.copyWith(quantity: m.quantity + additionalQuantity);
+        }
+        return m;
+      }).toList();
+
+      final newTotal = group.totalQuantity + additionalQuantity;
+
+      // Check if group is now complete
+      String newStatus = group.status;
+      if (group.targetQuantity != null && newTotal >= group.targetQuantity!) {
+        newStatus = AppConstants.groupStatusCompleted;
+      }
+
+      transaction.update(groupRef, {
+        'members': updatedMembers.map((m) => m.toMap()).toList(),
+        'totalQuantity': newTotal,
+        'status': newStatus,
+        'updatedAt': Timestamp.fromDate(DateTime.now()),
+      });
+    });
+  }
+
   /// Remove a member who failed to pay and redistribute their quantity
   Future<void> removeMemberForNonPayment(
     String groupId,
