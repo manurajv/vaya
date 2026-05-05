@@ -40,12 +40,12 @@ ios/Flutter/Generated.xcconfig
 ios/Flutter/flutter_export_environment.sh
 ios/Flutter/ephemeral/
 
-# ── Firebase secrets (NEVER commit these) ────────────────────────────────────
-# google-services.json contains API keys — keep out of public repos
-# Uncomment the line below if this is a PUBLIC repository:
-# android/app/google-services.json
-# ios/Runner/GoogleService-Info.plist
-# lib/firebase_options.dart
+# ── Firebase secrets (NEVER commit these to PUBLIC repos) ────────────────────
+# google-services.json and firebase_options.dart contain API keys.
+# This is a PUBLIC repository — these files are excluded.
+android/app/google-services.json
+ios/Runner/GoogleService-Info.plist
+lib/firebase_options.dart
 
 # ── Node / Cloud Functions ────────────────────────────────────────────────────
 functions/node_modules/
