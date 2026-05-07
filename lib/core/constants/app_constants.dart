@@ -2,7 +2,7 @@ class AppConstants {
   AppConstants._();
 
   // Feature Flags
-  static const bool kSupplierPanelEnabled = true; // Enabled
+  static const bool kSupplierPanelEnabled = false; // MVP: hide supplier UI (regs)
   static const bool kPartialPaymentEnabled = false; // Optional in MVP
   static const bool kAdvancedLogisticsEnabled = false;
   static const bool kAiRecommendationsEnabled = false;
@@ -52,6 +52,8 @@ class AppConstants {
   static const int maxQuantity = 999999;
 
   // Payment
+  /// Shown when supplier has not saved UPI on profile (orders still work; supplier should update profile).
+  static const String placeholderSupplierUpi = 'merchant@upi';
   static const String companyUpiId = 'vaya@upi'; // Company UPI for token
   static const String companyAccountName = 'VAYA Technologies Pvt Ltd';
   static const String companyBankName = 'HDFC Bank';

@@ -5,11 +5,40 @@ import '../../../../core/constants/app_constants.dart';
 import '../../../../shared/models/group_model.dart';
 import '../../../../shared/models/pricing_tier_model.dart';
 
-// All active groups (for home screen deals)
+/// Result of increasing a member's quantity in a group (may be capped by target).
+class MemberQuantityUpdateResult {
+  final int quantityAdded;
+  final int newGroupTotal;
+  final bool wasCapped;
+
+  const MemberQuantityUpdateResult({
+    required this.quantityAdded,
+    required this.newGroupTotal,
+    required this.wasCapped,
+  });
+}
+
+String _statusAfterQuantityChange(GroupModel before, GroupModel after) {
+  if (after.isFulfillmentComplete) {
+    return AppConstants.groupStatusCompleted;
+  }
+  if (before.status == AppConstants.groupStatusCompleted) {
+    return AppConstants.groupStatusActive;
+  }
+  if (before.status == AppConstants.groupStatusPendingApproval) {
+    return AppConstants.groupStatusPendingApproval;
+  }
+  return AppConstants.groupStatusActive;
+}
+
+// All open groups forming deals (active + awaiting supplier discount sign-off)
 final activeGroupsProvider = StreamProvider<List<GroupModel>>((ref) {
   return FirebaseFirestore.instance
       .collection(AppConstants.groupsCollection)
-      .where('status', isEqualTo: AppConstants.groupStatusActive)
+      .where('status', whereIn: [
+        AppConstants.groupStatusActive,
+        AppConstants.groupStatusPendingApproval,
+      ])
       .orderBy('createdAt', descending: true)
       .snapshots()
       .map((snap) =>
@@ -22,7 +51,10 @@ final groupsByProductProvider =
   return FirebaseFirestore.instance
       .collection(AppConstants.groupsCollection)
       .where('productId', isEqualTo: productId)
-      .where('status', isEqualTo: AppConstants.groupStatusActive)
+      .where('status', whereIn: [
+        AppConstants.groupStatusActive,
+        AppConstants.groupStatusPendingApproval,
+      ])
       .orderBy('createdAt', descending: true)
       .snapshots()
       .map((snap) =>
@@ -98,9 +130,7 @@ class GroupService {
       targetQuantity: targetQuantity,
       totalQuantity: creatorQuantity,
       members: [member],
-      status: mode == AppConstants.groupModeBuyerInitiated
-          ? AppConstants.groupStatusActive
-          : AppConstants.groupStatusActive,
+      status: AppConstants.groupStatusActive,
       deadline: deadline,
       createdAt: now,
       updatedAt: now,
@@ -132,14 +162,30 @@ class GroupService {
 
       final group = GroupModel.fromFirestore(groupDoc);
 
-      if (group.status != AppConstants.groupStatusActive) {
-        throw Exception('This group is no longer active');
+      if (group.status != AppConstants.groupStatusActive &&
+          group.status != AppConstants.groupStatusPendingApproval) {
+        throw Exception('This group is no longer open for joining');
       }
       if (group.isExpired) {
         throw Exception('This group has expired');
       }
       if (group.isMember(userId)) {
         throw Exception('You are already a member of this group');
+      }
+
+      final target = group.targetQuantity;
+      if (target != null) {
+        final remaining = target - group.totalQuantity;
+        if (remaining <= 0) {
+          throw Exception(
+            'This group is full — the target quantity has been reached',
+          );
+        }
+        if (quantity > remaining) {
+          throw Exception(
+            'Only $remaining units left in this group. Reduce your quantity or try another group.',
+          );
+        }
       }
 
       final newMember = GroupMember(
@@ -153,11 +199,11 @@ class GroupService {
       final updatedMembers = [...group.members, newMember];
       final newTotal = group.totalQuantity + quantity;
 
-      // Check if group is now complete
-      String newStatus = group.status;
-      if (group.targetQuantity != null && newTotal >= group.targetQuantity!) {
-        newStatus = AppConstants.groupStatusCompleted;
-      }
+      final nextSnapshot = group.copyWith(
+        members: updatedMembers,
+        totalQuantity: newTotal,
+      );
+      final newStatus = _statusAfterQuantityChange(group, nextSnapshot);
 
       transaction.update(groupRef, {
         'members': updatedMembers.map((m) => m.toMap()).toList(),
@@ -170,27 +216,35 @@ class GroupService {
   }
 
   Future<void> requestDiscountApproval(String groupId) async {
-    await _firestore
-        .collection(AppConstants.groupsCollection)
-        .doc(groupId)
-        .update({
-      'status': AppConstants.groupStatusPendingApproval,
-      'updatedAt': Timestamp.fromDate(DateTime.now()),
-    });
-  }
+    final groupRef =
+        _firestore.collection(AppConstants.groupsCollection).doc(groupId);
 
-  Future<void> approveDiscount(
-      String groupId, String note, bool approved) async {
-    await _firestore
-        .collection(AppConstants.groupsCollection)
-        .doc(groupId)
-        .update({
-      'discountApproved': approved,
-      'discountApprovalNote': note,
-      'status': approved
-          ? AppConstants.groupStatusActive
-          : AppConstants.groupStatusCancelled,
-      'updatedAt': Timestamp.fromDate(DateTime.now()),
+    await _firestore.runTransaction((transaction) async {
+      final groupDoc = await transaction.get(groupRef);
+      if (!groupDoc.exists) throw Exception('Group not found');
+
+      final group = GroupModel.fromFirestore(groupDoc);
+      if (group.mode != AppConstants.groupModeBuyerInitiated) {
+        throw Exception(
+          'Only buyer-initiated groups use supplier discount approval',
+        );
+      }
+      if (!group.isMinimumMet) {
+        throw Exception(
+          'Reach at least ${group.minimumQuantity} pooled units before requesting supplier approval',
+        );
+      }
+      if (group.discountApproved) {
+        throw Exception('This discount is already approved');
+      }
+      if (group.status != AppConstants.groupStatusActive) {
+        throw Exception('Cannot request approval in the current group state');
+      }
+
+      transaction.update(groupRef, {
+        'status': AppConstants.groupStatusPendingApproval,
+        'updatedAt': Timestamp.fromDate(DateTime.now()),
+      });
     });
   }
 
@@ -248,23 +302,28 @@ class GroupService {
   /// Check and mark expired groups — call periodically from the app
   Future<void> checkAndExpireGroups() async {
     final now = Timestamp.fromDate(DateTime.now());
-    final snapshot = await _firestore
-        .collection(AppConstants.groupsCollection)
-        .where('status', isEqualTo: AppConstants.groupStatusActive)
-        .where('deadline', isLessThan: now)
-        .get();
+    for (final status in [
+      AppConstants.groupStatusActive,
+      AppConstants.groupStatusPendingApproval,
+    ]) {
+      final snapshot = await _firestore
+          .collection(AppConstants.groupsCollection)
+          .where('status', isEqualTo: status)
+          .where('deadline', isLessThan: now)
+          .get();
 
-    for (final doc in snapshot.docs) {
-      await doc.reference.update({
-        'status': AppConstants.groupStatusExpired,
-        'updatedAt': Timestamp.fromDate(DateTime.now()),
-      });
+      for (final doc in snapshot.docs) {
+        await doc.reference.update({
+          'status': AppConstants.groupStatusExpired,
+          'updatedAt': Timestamp.fromDate(DateTime.now()),
+        });
+      }
     }
   }
 
-  /// Buyer increases their quantity in an active group.
-  /// The increase is capped so the group total cannot exceed targetQuantity.
-  Future<void> updateMemberQuantity({
+  /// Buyer increases their quantity. Optional cap when [targetQuantity] is set.
+  /// Returns how much was actually added (never rolls back a successful cap).
+  Future<MemberQuantityUpdateResult> updateMemberQuantity({
     required String groupId,
     required String userId,
     required int additionalQuantity,
@@ -277,14 +336,18 @@ class GroupService {
         .collection(AppConstants.groupsCollection)
         .doc(groupId);
 
+    MemberQuantityUpdateResult? result;
+
     await _firestore.runTransaction((transaction) async {
       final groupDoc = await transaction.get(groupRef);
       if (!groupDoc.exists) throw Exception('Group not found');
 
       final group = GroupModel.fromFirestore(groupDoc);
 
-      if (group.status != AppConstants.groupStatusActive) {
-        throw Exception('Quantity can only be changed in an active group');
+      if (group.status != AppConstants.groupStatusActive &&
+          group.status != AppConstants.groupStatusPendingApproval) {
+        throw Exception(
+            'Quantity can only be changed while the group is open');
       }
       if (group.isExpired) {
         throw Exception('This group has expired');
@@ -295,19 +358,18 @@ class GroupService {
         throw Exception('You are not a member of this group');
       }
 
-      // Block change after payment
       if (member.paymentStatus != AppConstants.paymentStatusPending) {
         throw Exception('Quantity cannot be changed after payment is made');
       }
 
-      // Cap: don't let the group exceed its target quantity
       final target = group.targetQuantity;
-      int allowedAdditional = additionalQuantity;
+      var allowedAdditional = additionalQuantity;
       if (target != null) {
         final remainingCapacity = target - group.totalQuantity;
         if (remainingCapacity <= 0) {
           throw Exception(
-              'Group has already reached its target quantity of $target units');
+            'Group has already reached its target quantity of $target units',
+          );
         }
         if (additionalQuantity > remainingCapacity) {
           allowedAdditional = remainingCapacity;
@@ -323,11 +385,11 @@ class GroupService {
 
       final newTotal = group.totalQuantity + allowedAdditional;
 
-      // Mark complete if target is now met
-      String newStatus = group.status;
-      if (target != null && newTotal >= target) {
-        newStatus = AppConstants.groupStatusCompleted;
-      }
+      final nextSnapshot = group.copyWith(
+        members: updatedMembers,
+        totalQuantity: newTotal,
+      );
+      final newStatus = _statusAfterQuantityChange(group, nextSnapshot);
 
       transaction.update(groupRef, {
         'members': updatedMembers.map((m) => m.toMap()).toList(),
@@ -336,16 +398,14 @@ class GroupService {
         'updatedAt': Timestamp.fromDate(DateTime.now()),
       });
 
-      // Return the actual quantity added (may be less than requested)
-      if (allowedAdditional < additionalQuantity) {
-        throw _PartialUpdateException(
-          added: allowedAdditional,
-          newTotal: newTotal,
-          message:
-              'Only $allowedAdditional units added — group target of $target reached.',
-        );
-      }
+      result = MemberQuantityUpdateResult(
+        quantityAdded: allowedAdditional,
+        newGroupTotal: newTotal,
+        wasCapped: allowedAdditional < additionalQuantity,
+      );
     });
+
+    return result!;
   }
 
   /// Remove a member who failed to pay and redistribute their quantity
@@ -370,9 +430,17 @@ class GroupService {
           group.members.where((m) => m.userId != userId).toList();
       final newTotal = group.totalQuantity - member.quantity;
 
+      final nextSnapshot = group.copyWith(
+        members: updatedMembers,
+        totalQuantity: newTotal,
+      );
+      final newStatus = _statusAfterQuantityChange(group, nextSnapshot);
+
       transaction.update(groupRef, {
         'members': updatedMembers.map((m) => m.toMap()).toList(),
+        'memberIds': updatedMembers.map((m) => m.userId).toList(),
         'totalQuantity': newTotal,
+        'status': newStatus,
         'updatedAt': Timestamp.fromDate(DateTime.now()),
         'cancellationReason': reason,
       });
@@ -381,17 +449,3 @@ class GroupService {
 }
 
 final groupServiceProvider = Provider<GroupService>((ref) => GroupService());
-
-/// Thrown when a quantity increase is partially fulfilled (capped at target)
-class _PartialUpdateException implements Exception {
-  final int added;
-  final int newTotal;
-  final String message;
-  const _PartialUpdateException({
-    required this.added,
-    required this.newTotal,
-    required this.message,
-  });
-  @override
-  String toString() => message;
-}

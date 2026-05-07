@@ -126,6 +126,28 @@ class GroupModel {
   bool get isTargetMet =>
       targetQuantity == null || totalQuantity >= targetQuantity!;
 
+  /// True when the group has satisfied rules to close the bulk deal and move to payment.
+  /// **supplier_target:** total pooled quantity reached [targetQuantity].
+  /// **buyer_initiated:** supplier approved the tiered pricing AND total ≥ [minimumQuantity].
+  bool get isFulfillmentComplete {
+    if (mode == 'supplier_target') {
+      final t = targetQuantity;
+      if (t == null || t <= 0) return false;
+      return totalQuantity >= t;
+    }
+    if (mode == 'buyer_initiated') {
+      return discountApproved && totalQuantity >= minimumQuantity;
+    }
+    return false;
+  }
+
+  /// Creator may ask the supplier to honour tier pricing (requires MOQ on the group).
+  bool get canRequestDiscountApproval =>
+      mode == 'buyer_initiated' &&
+      !discountApproved &&
+      status == 'active' &&
+      isMinimumMet;
+
   /// Whether the deadline has passed
   bool get isExpired => DateTime.now().isAfter(deadline);
 

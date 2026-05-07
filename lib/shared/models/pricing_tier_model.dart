@@ -60,27 +60,25 @@ class PricingTierModel {
 /// Utility to compute current price based on total quantity and tiers
 class PricingEngine {
   /// Returns the applicable tier for the given quantity.
-  /// Tiers should be sorted by minQuantity ascending.
+  /// Picks the best (highest [minQuantity]) tier that [qualifies] for [totalQuantity].
   static PricingTierModel? getActiveTier(
     List<PricingTierModel> tiers,
     int totalQuantity,
   ) {
     if (tiers.isEmpty) return null;
 
-    // Sort tiers by minQuantity descending to find the best applicable tier
     final sorted = List<PricingTierModel>.from(tiers)
       ..sort((a, b) => b.minQuantity.compareTo(a.minQuantity));
 
     for (final tier in sorted) {
-      if (totalQuantity >= tier.minQuantity) {
-        return tier;
-      }
+      if (tier.qualifies(totalQuantity)) return tier;
     }
 
-    // Return the base tier (lowest minQuantity) as default
-    return tiers.reduce(
+    // Below all bracket mins — show list price from the entry tier
+    final entry = tiers.reduce(
       (a, b) => a.minQuantity < b.minQuantity ? a : b,
     );
+    return entry;
   }
 
   /// Returns the next tier that hasn't been unlocked yet
@@ -98,7 +96,7 @@ class PricingEngine {
         return tier;
       }
     }
-    return null; // All tiers unlocked
+    return null;
   }
 
   /// Returns units needed to reach the next tier

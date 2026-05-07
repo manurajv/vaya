@@ -71,6 +71,13 @@ final routerProvider = Provider<GoRouter>((ref) {
   return GoRouter(
     initialLocation: AppRoutes.splash,
     debugLogDiagnostics: false,
+    redirect: (context, state) {
+      if (!AppConstants.kSupplierPanelEnabled &&
+          state.uri.path.startsWith('/supplier')) {
+        return AppRoutes.home;
+      }
+      return null;
+    },
     routes: [
       GoRoute(
         path: AppRoutes.splash,
@@ -192,8 +199,12 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state) {
           final groupId = state.pathParameters['groupId']!;
           final type = state.pathParameters['type']!;
+          final orderId = state.uri.queryParameters['orderId'];
           return UploadPaymentProofScreen(
-              groupId: groupId, paymentType: type);
+            groupId: groupId,
+            paymentType: type,
+            orderId: orderId,
+          );
         },
       ),
 

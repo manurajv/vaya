@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/constants/app_constants.dart';
 import '../../../../core/utils/formatters.dart';
 import '../../../../shared/widgets/app_button.dart';
 import '../../../orders/presentation/providers/order_provider.dart';
@@ -11,6 +14,47 @@ class FinalPaymentScreen extends ConsumerWidget {
   final String orderId;
 
   const FinalPaymentScreen({super.key, required this.orderId});
+
+  Future<void> _openUpi(BuildContext context, String upiLink) async {
+    final uri = Uri.parse(upiLink);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } else if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not open a UPI app. Pay using bank details below.'),
+        ),
+      );
+    }
+  }
+
+  void _showPaidReminder(BuildContext context, String groupId) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Supplier payment'),
+        content: const Text(
+          'Please upload a payment receipt so the supplier can verify and release your goods.',
+          style: TextStyle(fontFamily: 'Poppins', fontSize: 14),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Later'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              context.push(
+                '/payment/proof/$groupId/final?orderId=$orderId',
+              );
+            },
+            child: const Text('Upload proof'),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -25,15 +69,16 @@ class FinalPaymentScreen extends ConsumerWidget {
           }
 
           final remaining = order.remainingAmount;
-
-          // Supplier UPI link
+          final payeeName =
+              order.supplierBankAccountName ?? order.supplierName;
+          final upiId =
+              order.supplierUpiId ?? AppConstants.placeholderSupplierUpi;
           final upiLink =
-              'upi://pay?pa=supplier@upi&pn=${Uri.encodeComponent(order.supplierName)}&am=${remaining.toStringAsFixed(2)}&cu=INR&tn=${Uri.encodeComponent('Payment for ${order.productName}')}';
+              'upi://pay?pa=${Uri.encodeComponent(upiId)}&pn=${Uri.encodeComponent(payeeName)}&am=${remaining.toStringAsFixed(2)}&cu=INR&tn=${Uri.encodeComponent('VAYA ${order.productName}')}';
 
           return ListView(
             padding: const EdgeInsets.all(20),
             children: [
-              // Header
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
@@ -85,8 +130,6 @@ class FinalPaymentScreen extends ConsumerWidget {
                 ),
               ),
               const SizedBox(height: 20),
-
-              // Order summary
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
@@ -108,7 +151,8 @@ class FinalPaymentScreen extends ConsumerWidget {
                         value: Formatters.formatCurrency(order.totalAmount)),
                     _Row(
                         label: 'Token Paid',
-                        value: '- ${Formatters.formatCurrency(order.tokenAmount)}',
+                        value:
+                            '- ${Formatters.formatCurrency(order.tokenAmount)}',
                         valueColor: AppColors.success),
                     const Divider(height: 16),
                     _Row(
@@ -120,8 +164,6 @@ class FinalPaymentScreen extends ConsumerWidget {
                 ),
               ),
               const SizedBox(height: 20),
-
-              // Supplier payment details
               Container(
                 padding: const EdgeInsets.all(20),
                 decoration: BoxDecoration(
@@ -149,6 +191,24 @@ class FinalPaymentScreen extends ConsumerWidget {
                         color: AppColors.textSecondary,
                       ),
                     ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'UPI: $upiId',
+                      style: const TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: 12,
+                        color: AppColors.textHint,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    AppButton(
+                      label: 'Pay with UPI app',
+                      onPressed: order.isFullyPaid
+                          ? null
+                          : () => _openUpi(context, upiLink),
+                      prefixIcon: Icons.account_balance_wallet_outlined,
+                      height: 44,
+                    ),
                     const SizedBox(height: 16),
                     QrImageView(
                       data: upiLink,
@@ -169,19 +229,23 @@ class FinalPaymentScreen extends ConsumerWidget {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    // Supplier bank details would come from order/supplier data
-                    const _BankDetailRow(
-                        label: 'Account Name', value: 'Supplier Name'),
-                    const _BankDetailRow(
-                        label: 'Bank', value: 'Bank Name'),
-                    const _BankDetailRow(
-                        label: 'Account No.', value: 'XXXXXXXXXXXX'),
-                    const _BankDetailRow(label: 'IFSC', value: 'XXXXXXXXXX'),
+                    _BankDetailRow(
+                        label: 'Account Name',
+                        value: order.supplierBankAccountName ??
+                            order.supplierName),
+                    _BankDetailRow(
+                        label: 'Bank',
+                        value: order.supplierBankName ?? '—'),
+                    _BankDetailRow(
+                        label: 'Account No.',
+                        value: order.supplierAccountNumber ?? '—'),
+                    _BankDetailRow(
+                        label: 'IFSC',
+                        value: order.supplierIfscCode ?? '—'),
                   ],
                 ),
               ),
               const SizedBox(height: 20),
-
               Container(
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
@@ -206,19 +270,34 @@ class FinalPaymentScreen extends ConsumerWidget {
                 ),
               ),
               const SizedBox(height: 24),
-
               AppButton(
                 label: 'Upload Payment Proof',
-                onPressed: () {},
+                onPressed: order.isFullyPaid
+                    ? null
+                    : () => context.push(
+                          '/payment/proof/${order.groupId}/final?orderId=${order.id}',
+                        ),
                 prefixIcon: Icons.upload_outlined,
               ),
               const SizedBox(height: 12),
               AppButton(
                 label: 'I Have Paid',
                 variant: AppButtonVariant.outline,
-                onPressed: () {},
+                onPressed: order.isFullyPaid
+                    ? null
+                    : () =>
+                        _showPaidReminder(context, order.groupId),
                 prefixIcon: Icons.check_circle_outline,
               ),
+              if (order.isFullyPaid) ...[
+                const SizedBox(height: 12),
+                AppButton(
+                  label: 'View Order',
+                  variant: AppButtonVariant.outline,
+                  onPressed: () => context.push('/order/${order.id}'),
+                  prefixIcon: Icons.receipt_long_outlined,
+                ),
+              ],
               const SizedBox(height: 16),
             ],
           );
@@ -295,15 +374,17 @@ class _BankDetailRow extends StatelessWidget {
                     fontWeight: FontWeight.w600,
                     color: AppColors.textPrimary)),
           ),
-          GestureDetector(
-            onTap: () {
-              Clipboard.setData(ClipboardData(text: value));
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Copied!')),
-              );
-            },
-            child: const Icon(Icons.copy, size: 14, color: AppColors.textHint),
-          ),
+          if (value != '—')
+            GestureDetector(
+              onTap: () {
+                Clipboard.setData(ClipboardData(text: value));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Copied!')),
+                );
+              },
+              child:
+                  const Icon(Icons.copy, size: 14, color: AppColors.textHint),
+            ),
         ],
       ),
     );

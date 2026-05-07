@@ -2,14 +2,18 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:share_plus/share_plus.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_constants.dart';
 import '../../../../core/utils/formatters.dart';
 import '../../../../core/utils/validators.dart';
+import '../../../../shared/models/group_model.dart';
+import '../../../../shared/models/order_model.dart';
 import '../../../../shared/widgets/app_button.dart';
 import '../../../../shared/widgets/countdown_timer_widget.dart';
 import '../../../../shared/widgets/group_progress_widget.dart';
 import '../../../auth/presentation/providers/auth_provider.dart';
+import '../../../orders/presentation/providers/order_provider.dart';
 import '../providers/group_provider.dart';
 
 class GroupDetailScreen extends ConsumerWidget {
@@ -38,6 +42,8 @@ class GroupDetailScreen extends ConsumerWidget {
         final isCreator = currentUserId == group.creatorId;
         final myMembership =
             currentUserId != null ? group.getMember(currentUserId) : null;
+        final buyerOrder =
+            ref.watch(orderForGroupBuyerProvider(groupId)).valueOrNull;
 
         return Scaffold(
           backgroundColor: AppColors.background,
@@ -56,7 +62,7 @@ class GroupDetailScreen extends ConsumerWidget {
                 ),
               IconButton(
                 icon: const Icon(Icons.share_outlined),
-                onPressed: () {},
+                onPressed: () => _shareGroupInvite(context, group),
                 tooltip: 'Share Group',
               ),
             ],
@@ -134,7 +140,11 @@ class GroupDetailScreen extends ConsumerWidget {
                           ),
                           // Increase quantity button — only for active groups
                           // before payment is made
-                          if (group.status == AppConstants.groupStatusActive &&
+                          if ((group.status ==
+                                      AppConstants.groupStatusActive ||
+                                  group.status ==
+                                      AppConstants
+                                          .groupStatusPendingApproval) &&
                               myMembership.paymentStatus ==
                                   AppConstants.paymentStatusPending)
                             GestureDetector(
@@ -366,6 +376,7 @@ class GroupDetailScreen extends ConsumerWidget {
               isCreator: isCreator,
               isSupplier: isSupplier,
               myMembership: myMembership,
+              buyerOrder: buyerOrder,
               ref: ref,
             ),
           ),
@@ -384,11 +395,12 @@ class GroupDetailScreen extends ConsumerWidget {
 
   Widget _buildBottomActions(
     BuildContext context, {
-    required group,
+    required GroupModel group,
     required bool isMember,
     required bool isCreator,
     required bool isSupplier,
-    required myMembership,
+    required GroupMember? myMembership,
+    required OrderModel? buyerOrder,
     required WidgetRef ref,
   }) {
     // Suppliers see chat only — no join/payment actions
@@ -402,25 +414,71 @@ class GroupDetailScreen extends ConsumerWidget {
     }
 
     if (group.status == AppConstants.groupStatusCompleted) {
-      if (isMember &&
-          myMembership?.paymentStatus == AppConstants.paymentStatusPending) {
+      if (!isMember) return const SizedBox.shrink();
+
+      if (buyerOrder != null && buyerOrder.isFullyPaid) {
+        return AppButton(
+          label: 'View Order',
+          onPressed: () => context.push('/order/${buyerOrder.id}'),
+          prefixIcon: Icons.receipt_long_outlined,
+        );
+      }
+
+      if (myMembership?.paymentStatus == AppConstants.paymentStatusPending) {
         return AppButton(
           label: 'Pay Token Amount',
           onPressed: () => context.push('/payment/token/$groupId'),
           prefixIcon: Icons.payment_outlined,
         );
       }
-      if (isMember &&
-          myMembership?.paymentStatus ==
-              AppConstants.paymentStatusTokenPaid) {
-        return AppButton(
-          label: 'View Proforma Invoice',
-          onPressed: () {},
-          variant: AppButtonVariant.outline,
-          prefixIcon: Icons.receipt_outlined,
+
+      if (buyerOrder != null &&
+          (myMembership?.paymentStatus ==
+                  AppConstants.paymentStatusTokenPaid ||
+              buyerOrder.paymentStatus ==
+                  AppConstants.paymentStatusTokenPaid)) {
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            AppButton(
+              label: 'View Proforma Invoice',
+              onPressed: () => context.push('/invoice/${buyerOrder.id}'),
+              variant: AppButtonVariant.outline,
+              prefixIcon: Icons.receipt_outlined,
+              height: 48,
+            ),
+            if (!buyerOrder.isFullyPaid) ...[
+              const SizedBox(height: 8),
+              AppButton(
+                label: 'Pay Supplier (Final)',
+                onPressed: () =>
+                    context.push('/payment/final/${buyerOrder.id}'),
+                prefixIcon: Icons.payments_outlined,
+                height: 48,
+              ),
+            ],
+          ],
         );
       }
-      return const SizedBox(height: 8);
+
+      if (buyerOrder == null &&
+          myMembership?.paymentStatus ==
+              AppConstants.paymentStatusTokenPaid) {
+        return const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 8),
+          child: Text(
+            'Your order is being prepared. Pull to refresh shortly.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontFamily: 'Poppins',
+              fontSize: 13,
+              color: AppColors.textSecondary,
+            ),
+          ),
+        );
+      }
+
+      return const SizedBox.shrink();
     }
 
     if (group.status == AppConstants.groupStatusExpired) {
@@ -455,21 +513,31 @@ class GroupDetailScreen extends ConsumerWidget {
       );
     }
 
-    if (group.mode == AppConstants.groupModeBuyerInitiated &&
-        !group.discountApproved &&
-        isCreator) {
+    if (group.canRequestDiscountApproval && isCreator) {
       return AppButton(
         label: 'Request Supplier Approval',
         onPressed: () async {
-          await ref
-              .read(groupServiceProvider)
-              .requestDiscountApproval(groupId);
-          if (context.mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
+          try {
+            await ref
+                .read(groupServiceProvider)
+                .requestDiscountApproval(groupId);
+            if (context.mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
                   content:
-                      Text('Discount approval request sent to supplier')),
-            );
+                      Text('Discount approval request sent to supplier'),
+                ),
+              );
+            }
+          } catch (e) {
+            if (context.mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(e.toString()),
+                  backgroundColor: AppColors.error,
+                ),
+              );
+            }
           }
         },
         prefixIcon: Icons.send_outlined,
@@ -490,7 +558,7 @@ class GroupDetailScreen extends ConsumerWidget {
         Expanded(
           child: AppButton(
             label: 'Invite',
-            onPressed: () {},
+            onPressed: () => _shareGroupInvite(context, group),
             prefixIcon: Icons.person_add_outlined,
           ),
         ),
@@ -831,30 +899,33 @@ class _IncreaseQuantitySheetState
     if (!_formKey.currentState!.validate()) return;
     setState(() => _isLoading = true);
     try {
-      await ref.read(groupServiceProvider).updateMemberQuantity(
+      final result = await ref.read(groupServiceProvider).updateMemberQuantity(
             groupId: widget.groupId,
             userId: widget.userId,
             additionalQuantity: _additionalQty,
           );
       if (mounted) {
         Navigator.pop(context);
+        final newMemberQty =
+            widget.currentQuantity + result.quantityAdded;
+        final message = result.wasCapped
+            ? 'Added ${result.quantityAdded} units (group target cap). Your new total: $newMemberQty'
+            : 'Quantity updated to $newMemberQty units!';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Quantity updated to $_newMemberTotal units!'),
-            backgroundColor: AppColors.success,
+            content: Text(message),
+            backgroundColor:
+                result.wasCapped ? AppColors.warning : AppColors.success,
           ),
         );
       }
     } catch (e) {
       if (mounted) {
-        // _PartialUpdateException shows a warning, not an error
-        final isPartial = e.toString().contains('Only');
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(e.toString()),
-            backgroundColor:
-                isPartial ? AppColors.warning : AppColors.error,
+            backgroundColor: AppColors.error,
           ),
         );
       }
@@ -1077,4 +1148,13 @@ class _PreviewRow extends StatelessWidget {
       ),
     );
   }
+}
+
+void _shareGroupInvite(BuildContext context, GroupModel group) {
+  Share.share(
+    'Join our B2B group buy for "${group.productName}" on VAYA.\n'
+    'Pooled: ${group.totalQuantity} units · Closes ${Formatters.formatDateTime(group.deadline)}.\n'
+    'Group ID: ${group.id}',
+    subject: 'VAYA — ${group.productName}',
+  );
 }

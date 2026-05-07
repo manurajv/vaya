@@ -24,7 +24,7 @@ exports.expireGroups = onSchedule('every 15 minutes', async () => {
 
   const snapshot = await db
     .collection('groups')
-    .where('status', '==', 'active')
+    .where('status', 'in', ['active', 'pending_approval'])
     .where('deadline', '<', now)
     .get();
 
@@ -77,6 +77,12 @@ exports.onGroupCompleted = onDocumentUpdated('groups/{groupId}', async (event) =
 
   if (before.status === after.status || after.status !== 'completed') return;
 
+  let supplierPay = {};
+  if (after.supplierId) {
+    const supplierSnap = await db.collection('users').doc(after.supplierId).get();
+    if (supplierSnap.exists) supplierPay = supplierSnap.data() ?? {};
+  }
+
   const batch = db.batch();
   const buyerNotifications = [];
 
@@ -102,6 +108,11 @@ exports.onGroupCompleted = onDocumentUpdated('groups/{groupId}', async (event) =
       tokenAmount,
       status:             'pending',
       paymentStatus:      'pending',
+      supplierUpiId:               supplierPay.upiId ?? null,
+      supplierBankAccountName:     supplierPay.bankAccountName ?? null,
+      supplierBankName:            supplierPay.bankName ?? null,
+      supplierAccountNumber:        supplierPay.bankAccountNumber ?? null,
+      supplierIfscCode:            supplierPay.bankIfscCode ?? null,
       createdAt:          FieldValue.serverTimestamp(),
       updatedAt:          FieldValue.serverTimestamp(),
     });
@@ -163,16 +174,22 @@ exports.onDiscountDecision = onDocumentUpdated('groups/{groupId}', async (event)
   const after  = event.data.after.data();
   const groupId = event.params.groupId;
 
-  // Only fire when discountApproved field changes
-  if (before.discountApproved === after.discountApproved) return;
   if (before.status !== 'pending_approval') return;
 
-  const approved = after.discountApproved === true;
+  const isApprove = after.discountApproved === true && after.status !== 'cancelled';
+  const isReject = after.status === 'cancelled';
+
+  if (!isApprove && !isReject) return;
+
   const note = after.discountApprovalNote ?? '';
 
-  const title = approved ? '✅ Discount Approved!' : '❌ Discount Rejected';
-  const body  = approved
-    ? `${after.supplierName} approved the discount for "${after.productName}". Invite more buyers!`
+  const title = isApprove ? '✅ Discount Approved!' : '❌ Discount Rejected';
+  const body = isApprove
+    ? `${after.supplierName} approved tier pricing for "${after.productName}". ${
+        after.status === 'completed'
+          ? 'Minimum quantity is met — proceed with token payment.'
+          : 'You can invite more buyers to lock in the deal.'
+      }`
     : `${after.supplierName} rejected the discount request for "${after.productName}". ${note}`;
 
   await notifyUser(after.creatorId, {
@@ -468,6 +485,14 @@ async function saveNotification(userId, { title, body, type, route }) {
  */
 function getActiveTier(tiers, totalQuantity) {
   if (!Array.isArray(tiers) || tiers.length === 0) return null;
-  const sorted = [...tiers].sort((a, b) => b.minQuantity - a.minQuantity);
-  return sorted.find((t) => totalQuantity >= t.minQuantity) ?? sorted[sorted.length - 1];
+  const qualifies = (t, q) => {
+    if (q < t.minQuantity) return false;
+    if (t.maxQuantity != null && q > t.maxQuantity) return false;
+    return true;
+  };
+  const sortedDesc = [...tiers].sort((a, b) => b.minQuantity - a.minQuantity);
+  const match = sortedDesc.find((t) => qualifies(t, totalQuantity));
+  if (match) return match;
+  const sortedAsc = [...tiers].sort((a, b) => a.minQuantity - b.minQuantity);
+  return sortedAsc[0] ?? null;
 }

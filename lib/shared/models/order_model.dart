@@ -25,6 +25,12 @@ class OrderModel {
   final String? cancellationReason;
   final String? supplierNotes;
   final String? buyerNotes;
+  /// Snapshot of supplier payout details at order creation (for final payment UI).
+  final String? supplierUpiId;
+  final String? supplierBankAccountName;
+  final String? supplierBankName;
+  final String? supplierAccountNumber;
+  final String? supplierIfscCode;
 
   const OrderModel({
     required this.id,
@@ -51,6 +57,11 @@ class OrderModel {
     this.cancellationReason,
     this.supplierNotes,
     this.buyerNotes,
+    this.supplierUpiId,
+    this.supplierBankAccountName,
+    this.supplierBankName,
+    this.supplierAccountNumber,
+    this.supplierIfscCode,
   });
 
   double get remainingAmount => totalAmount - tokenAmount;
@@ -90,6 +101,11 @@ class OrderModel {
       cancellationReason: data['cancellationReason'],
       supplierNotes: data['supplierNotes'],
       buyerNotes: data['buyerNotes'],
+      supplierUpiId: data['supplierUpiId'],
+      supplierBankAccountName: data['supplierBankAccountName'],
+      supplierBankName: data['supplierBankName'],
+      supplierAccountNumber: data['supplierAccountNumber'],
+      supplierIfscCode: data['supplierIfscCode'],
     );
   }
 
@@ -121,6 +137,11 @@ class OrderModel {
       'cancellationReason': cancellationReason,
       'supplierNotes': supplierNotes,
       'buyerNotes': buyerNotes,
+      'supplierUpiId': supplierUpiId,
+      'supplierBankAccountName': supplierBankAccountName,
+      'supplierBankName': supplierBankName,
+      'supplierAccountNumber': supplierAccountNumber,
+      'supplierIfscCode': supplierIfscCode,
     };
   }
 
@@ -149,6 +170,11 @@ class OrderModel {
     String? cancellationReason,
     String? supplierNotes,
     String? buyerNotes,
+    String? supplierUpiId,
+    String? supplierBankAccountName,
+    String? supplierBankName,
+    String? supplierAccountNumber,
+    String? supplierIfscCode,
   }) {
     return OrderModel(
       id: id ?? this.id,
@@ -175,6 +201,13 @@ class OrderModel {
       cancellationReason: cancellationReason ?? this.cancellationReason,
       supplierNotes: supplierNotes ?? this.supplierNotes,
       buyerNotes: buyerNotes ?? this.buyerNotes,
+      supplierUpiId: supplierUpiId ?? this.supplierUpiId,
+      supplierBankAccountName:
+          supplierBankAccountName ?? this.supplierBankAccountName,
+      supplierBankName: supplierBankName ?? this.supplierBankName,
+      supplierAccountNumber:
+          supplierAccountNumber ?? this.supplierAccountNumber,
+      supplierIfscCode: supplierIfscCode ?? this.supplierIfscCode,
     );
   }
 }

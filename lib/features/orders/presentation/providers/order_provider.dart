@@ -25,3 +25,20 @@ final orderByIdProvider =
       .snapshots()
       .map((doc) => doc.exists ? OrderModel.fromFirestore(doc) : null);
 });
+
+/// The current user's order for a completed group (one doc per member after group completes).
+final orderForGroupBuyerProvider =
+    StreamProvider.family<OrderModel?, String>((ref, groupId) {
+  final uid = FirebaseAuth.instance.currentUser?.uid;
+  if (uid == null) return Stream.value(null);
+
+  return FirebaseFirestore.instance
+      .collection(AppConstants.ordersCollection)
+      .where('groupId', isEqualTo: groupId)
+      .where('buyerId', isEqualTo: uid)
+      .limit(1)
+      .snapshots()
+      .map((snap) => snap.docs.isEmpty
+          ? null
+          : OrderModel.fromFirestore(snap.docs.first));
+});

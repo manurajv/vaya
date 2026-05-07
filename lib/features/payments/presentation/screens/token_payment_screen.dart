@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/constants/app_constants.dart';
 import '../../../../core/utils/formatters.dart';
@@ -22,6 +23,19 @@ class TokenPaymentScreen extends ConsumerStatefulWidget {
 
 class _TokenPaymentScreenState extends ConsumerState<TokenPaymentScreen> {
   bool _isConfirming = false;
+
+  Future<void> _openUpi(String upiLink) async {
+    final uri = Uri.parse(upiLink);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } else if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not open a UPI app.'),
+        ),
+      );
+    }
+  }
 
   Future<void> _confirmPayment() async {
     setState(() => _isConfirming = true);
@@ -218,6 +232,22 @@ class _TokenPaymentScreenState extends ConsumerState<TokenPaymentScreen> {
                       version: QrVersions.auto,
                       size: 200,
                       backgroundColor: Colors.white,
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'UPI: ${AppConstants.companyUpiId}',
+                      style: const TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: 12,
+                        color: AppColors.textHint,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    AppButton(
+                      label: 'Pay with UPI app',
+                      onPressed: () => _openUpi(upiLink),
+                      prefixIcon: Icons.account_balance_wallet_outlined,
+                      height: 44,
                     ),
                     const SizedBox(height: 16),
                     const Divider(),

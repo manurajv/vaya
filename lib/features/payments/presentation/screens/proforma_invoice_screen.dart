@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import 'package:share_plus/share_plus.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/utils/formatters.dart';
+import '../../../../shared/models/order_model.dart';
 import '../../../../shared/widgets/app_button.dart';
 import '../../../orders/presentation/providers/order_provider.dart';
 
@@ -14,30 +17,34 @@ class ProformaInvoiceScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final orderAsync = ref.watch(orderByIdProvider(orderId));
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Proforma Invoice'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.share_outlined),
-            onPressed: () {},
-          ),
-          IconButton(
-            icon: const Icon(Icons.download_outlined),
-            onPressed: () {},
-          ),
-        ],
-      ),
-      body: orderAsync.when(
-        data: (order) {
-          if (order == null) {
-            return const Center(child: Text('Order not found'));
-          }
+    return orderAsync.when(
+      data: (order) {
+        if (order == null) {
+          return Scaffold(
+            appBar: AppBar(title: const Text('Proforma Invoice')),
+            body: const Center(child: Text('Order not found')),
+          );
+        }
 
-          return ListView(
+        return Scaffold(
+          appBar: AppBar(
+            title: const Text('Proforma Invoice'),
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.share_outlined),
+                tooltip: 'Share',
+                onPressed: () => _shareProforma(context, order),
+              ),
+              IconButton(
+                icon: const Icon(Icons.download_outlined),
+                tooltip: 'Export / share',
+                onPressed: () => _shareProforma(context, order),
+              ),
+            ],
+          ),
+          body: ListView(
             padding: const EdgeInsets.all(20),
             children: [
-              // Invoice header
               Container(
                 padding: const EdgeInsets.all(20),
                 decoration: BoxDecoration(
@@ -97,8 +104,6 @@ class ProformaInvoiceScreen extends ConsumerWidget {
                     const SizedBox(height: 16),
                     const Divider(),
                     const SizedBox(height: 16),
-
-                    // Parties
                     Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -121,8 +126,6 @@ class ProformaInvoiceScreen extends ConsumerWidget {
                     const SizedBox(height: 16),
                     const Divider(),
                     const SizedBox(height: 16),
-
-                    // Invoice date
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
@@ -142,8 +145,6 @@ class ProformaInvoiceScreen extends ConsumerWidget {
                 ),
               ),
               const SizedBox(height: 16),
-
-              // Line items
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
@@ -163,7 +164,6 @@ class ProformaInvoiceScreen extends ConsumerWidget {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    // Header
                     Row(
                       children: const [
                         Expanded(
@@ -286,8 +286,6 @@ class ProformaInvoiceScreen extends ConsumerWidget {
                 ),
               ),
               const SizedBox(height: 16),
-
-              // Terms
               Container(
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
@@ -318,21 +316,53 @@ class ProformaInvoiceScreen extends ConsumerWidget {
                 ),
               ),
               const SizedBox(height: 24),
-
-              AppButton(
-                label: 'Proceed to Final Payment',
-                onPressed: () {},
-                prefixIcon: Icons.payment_outlined,
-              ),
+              if (!order.isFullyPaid)
+                AppButton(
+                  label: 'Proceed to Final Payment',
+                  onPressed: () =>
+                      context.push('/payment/final/${order.id}'),
+                  prefixIcon: Icons.payment_outlined,
+                ),
+              if (order.isFullyPaid)
+                AppButton(
+                  label: 'View Order Status',
+                  variant: AppButtonVariant.outline,
+                  onPressed: () => context.push('/order/${order.id}'),
+                  prefixIcon: Icons.receipt_long_outlined,
+                ),
               const SizedBox(height: 16),
             ],
-          );
-        },
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(child: Text('Error: $e')),
+          ),
+        );
+      },
+      loading: () => Scaffold(
+        appBar: AppBar(title: const Text('Proforma Invoice')),
+        body: const Center(child: CircularProgressIndicator()),
+      ),
+      error: (e, _) => Scaffold(
+        appBar: AppBar(title: const Text('Proforma Invoice')),
+        body: Center(child: Text('Error: $e')),
       ),
     );
   }
+}
+
+Future<void> _shareProforma(BuildContext context, OrderModel order) async {
+  final text = StringBuffer()
+    ..writeln('PROFORMA INVOICE — VAYA')
+    ..writeln(Formatters.formatOrderId(order.id))
+    ..writeln('Seller: ${order.supplierName}')
+    ..writeln('Buyer: ${order.buyerBusinessName}')
+    ..writeln('Product: ${order.productName} × ${order.quantity}')
+    ..writeln(
+        'Rate: ${Formatters.formatCurrency(order.pricePerUnit)}  Total: ${Formatters.formatCurrency(order.totalAmount)}')
+    ..writeln(
+        'Token paid: ${Formatters.formatCurrency(order.tokenAmount)}  Balance: ${Formatters.formatCurrency(order.remainingAmount)}')
+    ..writeln('Date: ${Formatters.formatDate(order.createdAt)}');
+  await Share.share(
+    text.toString(),
+    subject: 'Proforma ${Formatters.formatOrderId(order.id)}',
+  );
 }
 
 class _PartyInfo extends StatelessWidget {

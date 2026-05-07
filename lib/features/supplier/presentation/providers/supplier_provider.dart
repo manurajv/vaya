@@ -190,13 +190,38 @@ class SupplierProductService {
 
   Future<void> approveDiscount(
       String groupId, bool approved, String note) async {
-    await _db.collection(AppConstants.groupsCollection).doc(groupId).update({
-      'discountApproved': approved,
-      'discountApprovalNote': note,
-      'status': approved
-          ? AppConstants.groupStatusActive
-          : AppConstants.groupStatusCancelled,
-      'updatedAt': Timestamp.fromDate(DateTime.now()),
+    final docRef = _db.collection(AppConstants.groupsCollection).doc(groupId);
+
+    await _db.runTransaction((transaction) async {
+      final snap = await transaction.get(docRef);
+      if (!snap.exists) throw Exception('Group not found');
+
+      final group = GroupModel.fromFirestore(snap);
+
+      if (!approved) {
+        transaction.update(docRef, {
+          'discountApproved': false,
+          'discountApprovalNote': note,
+          'status': AppConstants.groupStatusCancelled,
+          'updatedAt': Timestamp.fromDate(DateTime.now()),
+        });
+        return;
+      }
+
+      final after = group.copyWith(
+        discountApproved: true,
+        discountApprovalNote: note,
+      );
+      final newStatus = after.isFulfillmentComplete
+          ? AppConstants.groupStatusCompleted
+          : AppConstants.groupStatusActive;
+
+      transaction.update(docRef, {
+        'discountApproved': true,
+        'discountApprovalNote': note,
+        'status': newStatus,
+        'updatedAt': Timestamp.fromDate(DateTime.now()),
+      });
     });
   }
 

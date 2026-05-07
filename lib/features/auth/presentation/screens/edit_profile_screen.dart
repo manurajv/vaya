@@ -44,6 +44,11 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
   late final TextEditingController _addressCtrl;
   late final TextEditingController _cityCtrl;
   late final TextEditingController _pincodeCtrl;
+  late final TextEditingController _upiCtrl;
+  late final TextEditingController _bankAccountNameCtrl;
+  late final TextEditingController _bankNameCtrl;
+  late final TextEditingController _bankAccountNumberCtrl;
+  late final TextEditingController _bankIfscCtrl;
 
   String? _selectedCategory;
   String? _selectedState;
@@ -60,6 +65,13 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
     _addressCtrl = TextEditingController(text: user?.address ?? '');
     _cityCtrl = TextEditingController(text: user?.city ?? '');
     _pincodeCtrl = TextEditingController(text: user?.pincode ?? '');
+    _upiCtrl = TextEditingController(text: user?.upiId ?? '');
+    _bankAccountNameCtrl =
+        TextEditingController(text: user?.bankAccountName ?? '');
+    _bankNameCtrl = TextEditingController(text: user?.bankName ?? '');
+    _bankAccountNumberCtrl =
+        TextEditingController(text: user?.bankAccountNumber ?? '');
+    _bankIfscCtrl = TextEditingController(text: user?.bankIfscCode ?? '');
     _selectedCategory = user?.businessCategory;
     _selectedState = user?.state;
   }
@@ -71,6 +83,11 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
     _addressCtrl.dispose();
     _cityCtrl.dispose();
     _pincodeCtrl.dispose();
+    _upiCtrl.dispose();
+    _bankAccountNameCtrl.dispose();
+    _bankNameCtrl.dispose();
+    _bankAccountNumberCtrl.dispose();
+    _bankIfscCtrl.dispose();
     super.dispose();
   }
 
@@ -120,6 +137,27 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
         'updatedAt': Timestamp.fromDate(DateTime.now()),
       };
       if (imageUrl != null) updates['profileImageUrl'] = imageUrl;
+
+      final current = ref.read(currentUserProvider);
+      if (current?.userType == AppConstants.userTypeSupplier) {
+        updates['upiId'] = _upiCtrl.text.trim().isEmpty
+            ? null
+            : _upiCtrl.text.trim();
+        updates['bankAccountName'] =
+            _bankAccountNameCtrl.text.trim().isEmpty
+                ? null
+                : _bankAccountNameCtrl.text.trim();
+        updates['bankName'] = _bankNameCtrl.text.trim().isEmpty
+            ? null
+            : _bankNameCtrl.text.trim();
+        updates['bankAccountNumber'] =
+            _bankAccountNumberCtrl.text.trim().isEmpty
+                ? null
+                : _bankAccountNumberCtrl.text.trim();
+        updates['bankIfscCode'] = _bankIfscCtrl.text.trim().isEmpty
+            ? null
+            : _bankIfscCtrl.text.trim().toUpperCase();
+      }
 
       await FirebaseFirestore.instance
           .collection(AppConstants.usersCollection)
@@ -319,6 +357,66 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
               validator: (v) =>
                   v == null ? 'Please select a state' : null,
             ),
+            if (user?.userType == AppConstants.userTypeSupplier) ...[
+              const SizedBox(height: 28),
+              _Label('Supplier payouts (for buyer final payment)'),
+              const SizedBox(height: 8),
+              Text(
+                'Shown on orders after a group completes. Keep UPI and bank details accurate.',
+                style: TextStyle(
+                  fontFamily: 'Poppins',
+                  fontSize: 12,
+                  color: AppColors.textSecondary.withValues(alpha: 0.9),
+                ),
+              ),
+              const SizedBox(height: 14),
+              TextFormField(
+                controller: _upiCtrl,
+                textCapitalization: TextCapitalization.none,
+                decoration: const InputDecoration(
+                  labelText: 'UPI ID (e.g. merchant@upi)',
+                  prefixIcon: Icon(Icons.qr_code_2_outlined),
+                ),
+              ),
+              const SizedBox(height: 14),
+              TextFormField(
+                controller: _bankAccountNameCtrl,
+                textCapitalization: TextCapitalization.words,
+                decoration: const InputDecoration(
+                  labelText: 'Bank account name',
+                  prefixIcon: Icon(Icons.person_outline),
+                ),
+              ),
+              const SizedBox(height: 14),
+              TextFormField(
+                controller: _bankNameCtrl,
+                textCapitalization: TextCapitalization.words,
+                decoration: const InputDecoration(
+                  labelText: 'Bank name',
+                  prefixIcon: Icon(Icons.account_balance_outlined),
+                ),
+              ),
+              const SizedBox(height: 14),
+              TextFormField(
+                controller: _bankAccountNumberCtrl,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Account number',
+                  prefixIcon: Icon(Icons.numbers_outlined),
+                ),
+              ),
+              const SizedBox(height: 14),
+              TextFormField(
+                controller: _bankIfscCtrl,
+                textCapitalization: TextCapitalization.characters,
+                maxLength: 11,
+                decoration: const InputDecoration(
+                  labelText: 'IFSC code',
+                  prefixIcon: Icon(Icons.tag_outlined),
+                  counterText: '',
+                ),
+              ),
+            ],
             const SizedBox(height: 32),
 
             AppButton(

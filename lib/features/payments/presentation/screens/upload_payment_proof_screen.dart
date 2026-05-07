@@ -14,11 +14,13 @@ import '../../../groups/presentation/providers/group_provider.dart';
 class UploadPaymentProofScreen extends ConsumerStatefulWidget {
   final String groupId;
   final String paymentType; // 'token' | 'final'
+  final String? orderId;
 
   const UploadPaymentProofScreen({
     super.key,
     required this.groupId,
     required this.paymentType,
+    this.orderId,
   });
 
   @override
@@ -141,6 +143,7 @@ class _UploadPaymentProofScreenState
           .collection(AppConstants.paymentsCollection)
           .add({
         'groupId': widget.groupId,
+        if (widget.orderId != null) 'orderId': widget.orderId,
         'userId': user.id,
         'businessName': user.businessName,
         'paymentType': widget.paymentType,
@@ -157,6 +160,28 @@ class _UploadPaymentProofScreenState
               user.id,
               AppConstants.paymentStatusTokenPaid,
             );
+        final orderSnap = await FirebaseFirestore.instance
+            .collection(AppConstants.ordersCollection)
+            .where('groupId', isEqualTo: widget.groupId)
+            .where('buyerId', isEqualTo: user.id)
+            .limit(1)
+            .get();
+        if (orderSnap.docs.isNotEmpty) {
+          await orderSnap.docs.first.reference.update({
+            'paymentStatus': AppConstants.paymentStatusTokenPaid,
+            'updatedAt': Timestamp.fromDate(DateTime.now()),
+          });
+        }
+      }
+
+      if (widget.paymentType == 'final' && widget.orderId != null) {
+        await FirebaseFirestore.instance
+            .collection(AppConstants.ordersCollection)
+            .doc(widget.orderId)
+            .update({
+          'paymentStatus': AppConstants.paymentStatusFullPaid,
+          'updatedAt': Timestamp.fromDate(DateTime.now()),
+        });
       }
 
       if (mounted) {

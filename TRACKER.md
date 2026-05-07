@@ -354,3 +354,95 @@ firebase deploy --only functions,firestore:rules,firestore:indexes,storage
 | `/edit-profile` | Edit Profile |
 
 *Last updated: Session 4 – Notifications, Edit Profile, Payment Proof Upload, Skeletons, Connectivity*
+
+---
+
+## ✅ Session 5 – Group-buying lifecycle & pricing logic
+
+### Product / deployment roadmap
+| Phase | Focus |
+|-------|--------|
+| **Now** | Android app — correct group lifecycle, tiers, supplier approval, listings |
+| **Next** | Web buyer + supplier (reuse Firestore schema + Cloud Functions) |
+| **Later** | Admin panel (moderation, payouts, compliance, analytics) |
+
+### Group logic (implemented)
+- **Central rule — `GroupModel.isFulfillmentComplete`**
+  - **supplier_target:** `totalQuantity >= targetQuantity`
+  - **buyer_initiated:** `discountApproved && totalQuantity >= minimumQuantity`
+- **Status transitions** in `GroupService` via `_statusAfterQuantityChange`: joins / quantity bumps / removals move groups to `completed` only when fulfillment is satisfied; removing members from a `completed` group can revert to `active` if MOQ / target is no longer met.
+- **Join**
+  - Open groups: `active` **or** `pending_approval` (others can still pool while supplier reviews).
+  - **Supplier-target** groups: enforce remaining capacity; clear errors if the group is full or quantity is too high.
+- **Buyer-initiated**
+  - `canRequestDiscountApproval`: MOQ met, `active`, not yet approved.
+  - `requestDiscountApproval`: transactional validation (no request below MOQ or wrong mode).
+- **Supplier `approveDiscount`** (transactional): on approve → `completed` if fulfillment already met, else `active`; on reject → `cancelled`.
+- **Listings** (`activeGroupsProvider`, `groupsByProductProvider`): include `pending_approval` so buyer-formed groups stay discoverable.
+- **Expiry** (app + Cloud Function): expire both `active` and `pending_approval` when `deadline` passes.
+- **Pricing**
+  - `PricingEngine.getActiveTier` respects `maxQuantity` via `qualifies()`.
+  - Cloud Function `getActiveTier` aligned with app rules.
+- **Quantity bump** `updateMemberQuantity` returns `MemberQuantityUpdateResult` (caps at target **without** bogus transaction rollback); allowed in `pending_approval` as well as `active`.
+- **Join form:** per-member minimum quantity is `1`, not the group MOQ (MOQ applies to **pooled** total).
+- **Feature flag:** `kSupplierPanelEnabled = false` in `app_constants.dart` (supplier code remains for later).
+
+### Deploy note
+After pulling, run (if indexes prompt): `firebase deploy --only firestore:indexes,functions`
+
+*Last updated: Session 5 – Professional group lifecycle, tier maths, listings, supplier approval*
+
+---
+
+## ✅ Session 6 – Payments & orders wiring (buyer flow)
+
+### Implemented
+- **`orderForGroupBuyerProvider`** — stream of the signed-in buyer’s order for a `groupId` (for invoice / final payment entry).
+- **`OrderModel`** — optional supplier payout snapshot: `supplierUpiId`, bank fields (filled when Cloud Function creates orders if supplier profile has them).
+- **Cloud Function `onGroupCompleted`** — loads supplier `users/{supplierId}` and writes UPI + bank snapshot onto each new order.
+- **Firestore index** — `orders`: `groupId` + `buyerId` (equality query).
+- **Group detail**
+  - Share / invite via **Share.share** (text + group id + deadline).
+  - **Completed** state: Pay token → Proforma + Pay supplier → View order; handles “order creating” gap.
+- **Proforma invoice** — Share / export (same as share text), **Proceed to final payment** (`go_router`), **View order** when already fully paid.
+- **Final payment** — UPI deep link (`url_launcher`), QR from real/supplier UPI, bank rows from order snapshot, **Upload proof** with `?orderId=`, **I have paid** dialog → upload.
+- **Upload proof** — optional `orderId` query; token upload also sets matching **`orders`** doc to `token_paid`; final upload sets order to **`full_paid`** and stores `orderId` on payment doc.
+- **`AppConstants.placeholderSupplierUpi`** — fallback QR when supplier has not saved UPI (replace with profile data in production).
+
+### Deploy
+Redeploy **functions** and **indexes** after pull:
+`firebase deploy --only functions,firestore:indexes`
+
+*Last updated: Session 6 – Invoice + final payment + share*
+
+---
+
+## ✅ Session 7 – Chat media & supplier payout profile
+
+### Implemented
+- **Dependencies:** `file_picker` for documents and audio files from device.
+- **Group chat attachments**
+  - **Video:** gallery pick (`ImagePicker.pickVideo`) → Firebase Storage → `video` message.
+  - **Audio:** `FilePicker` (`FileType.audio`) → Storage → `audio` message (tap opens URL in external app).
+  - **File:** generic file pick → Storage → `file` message (name + size; tap to open).
+  - Shared upload path `_uploadAndSendChatFile` with unique storage names.
+  - **Bubbles:** video tile (tap to open), file row with `Formatters.formatFileSize`, audio tappable; images unchanged.
+- **Chat app bar** — info icon opens **group detail** (`/group/:id`) instead of only popping.
+- **Edit profile (suppliers only)** — section *Supplier payouts*: UPI ID, bank account name, bank name, account number, IFSC → Firestore `users` (same fields Cloud Function copies onto new orders).
+
+*Last updated: Session 7 – Chat attachments + supplier bank/UPI in profile*
+
+---
+
+## ✅ Session 8 – Token UPI deep link & in-app voice notes
+
+### Implemented
+- **Token payment** (`token_payment_screen.dart`) — **Pay with UPI app** opens the same `upi://` link as the QR (`LaunchMode.externalApplication`); UPI ID hint under QR for manual copy if needed.
+- **Group chat — record voice** — `record` + `permission_handler` + `path_provider`: bottom sheet **Record voice note** (AAC `.m4a`, duration cap ~3 min) uploads via existing `_uploadAndSendChatFile`; **Choose audio file** remains for library picks.
+- **iOS** — `NSMicrophoneUsageDescription` in `Info.plist` for mic permission.
+
+### Deploy / QA
+- Same as prior sessions: `firebase deploy --only functions,firestore:indexes` when backend/indexes change.
+- On device: confirm token **Pay with UPI app** opens PhonePe/GPay/etc.; mic prompt + record/stop/send on chat.
+
+*Last updated: Session 8 – Token UPI launcher + voice recording*

@@ -208,10 +208,25 @@ class _JoinGroupScreenState extends ConsumerState<JoinGroupScreen> {
                   controller: _quantityController,
                   keyboardType: TextInputType.number,
                   inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                  validator: (v) => Validators.validateQuantity(
-                    v,
-                    min: group.minimumQuantity,
-                  ),
+                  validator: (v) {
+                    final base = Validators.validateQuantity(
+                      v,
+                      min: AppConstants.minQuantity,
+                    );
+                    if (base != null) return base;
+                    final qty = int.tryParse(v ?? '') ?? 0;
+                    final target = group.targetQuantity;
+                    if (target != null) {
+                      final remaining = target - group.totalQuantity;
+                      if (remaining <= 0) {
+                        return 'This group is full';
+                      }
+                      if (qty > remaining) {
+                        return 'At most $remaining units left in this group';
+                      }
+                    }
+                    return null;
+                  },
                   onChanged: (_) => setState(() {}),
                   decoration: const InputDecoration(
                     hintText: 'Enter quantity',
